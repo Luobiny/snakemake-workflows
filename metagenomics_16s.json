@@ -1,0 +1,28 @@
+{
+    "rawdir" : "/raid/luobin/nfs/projectname"
+    "runs" : [
+        { "name" : "20150626" },
+        { "name" : "20150709" }
+    ],
+    "samples" : [
+        { "name" : "INJ-30" },
+        { "name" : "EAB-1" },
+        { "name" : "EAB-5" },
+        { "name" : "MW-314" },
+        { "name" : "CHEM-1" },
+        { "name" : "ICF-5D" },
+        { "name" : "WCC-1B" },
+        { "name" : "ICF-2" }
+    ],
+    "qfilter_min_qscore" : 13,
+    "qfilter_allowable_bases" : 8,
+    "qfilter_allowable_qscore" : 20,
+    "pick_otu_cmd" : "pick_open_reference_otus.py",
+    "qiime_reference_db" : "/bio/db/qiime/gg_13_8_otus/rep_set/99_otus.fasta",
+    "sample_min_reads" : 12000,
+    "tree_file" : "rep_set.tre",
+    "mapdata_file" : "mapdata.txt",
+    "parameter_file" : "parameters.txt",
+    "group_categories" : "Location"
+}
+
