@@ -1,0 +1,69 @@
+
+# a snakemake workflow file to execute alignment and counting for RNA-seq  analysis.
+# version 1.0 
+# created on 1/22/201
+# Luobin
+
+# retrieve the sample names
+sample_names=[sample["name"] for sample in config["sample.names"]]
+
+# The location where fastq files are located.
+fqdir=config["fqdir"]
+
+# parameters used while running STAR mapping
+star_genome_index_dir=config["star_genome_index_dir"]
+star_parameter_file=config["star_parameter_file"]
+
+import subprocess
+star_version = subprocess.check_output("STAR --version", shell=True)
+
+#rule all:
+#    input:
+#        "merged.ReadsPerGene.out.tab"
+
+rule unload_star_genome_index:
+    input:
+        "merged.ReadsPerGene.out.tab"
+    version: star_version
+    shell:
+       """ 
+       if [ -e star.genome.loaded ]; then 
+           rm star.genome.loaded;
+           STAR --genomeDir {star_genome_index_dir} --genomeLoad Remove;
+       fi
+       """
+rule load_star_genome_index:
+    version: star_version
+    output: 
+        touch("star.genome.loaded")
+    shell:
+        "STAR --genomeDir {star_genome_index_dir} --genomeLoad LoadAndExit"
+
+rule align_fastq:
+    input:
+        flag="star.genome.loaded",
+        R1=fqdir + "/{sample}.R1.fq",
+        R2=fqdir + "/{sample}.R2.fq"
+    version: star_version
+    output:
+        "{sample}.Aligned.out.sam",
+	"{sample}.ReadsPerGene.out.tab"
+    params:
+        out_prefix="{sample}."
+    threads: 16
+    shell:
+        "STAR --genomeDir {star_genome_index_dir} --parametersFiles {star_parameter_file} \
+	--outFileNamePrefix {params.out_prefix}  \
+	--readFilesIn {input.R1} {input.R2} \
+	--quantMode GeneCounts"
+
+# Merge all the counts from the count data to make a count matrix
+rule merge_counts:
+    input:
+        expand("{sample}.ReadsPerGene.out.tab", sample=sample_names)
+    output:
+        "merged.ReadsPerGene.out.tab" 
+    shell:
+        # This title line is not correct, should be separated by tab instead of space.
+        "echo {sample_names} > {output}; "
+        "paste {input} >> {output}" 
