@@ -1,0 +1,196 @@
+# 
+# Pipeline for Metagenomics 16s sequencing projects
+rawdir=config["rawdir"]
+runs=config["runs"]
+samples=config["samples"]
+
+# the follow three parameters are for ht-qfilter program
+# qfilter_min_qscore is the minimum phred-scaled base quality score allowed
+# in a read, any reads that contain bases having quality lower than this
+# qfilter_min_qscore will be filtered out.
+# qfilter_allowable_qscore defines another phred-scaled quality score threshold.
+# The number of bases between qfilter_min_qscore and qfilter_allowable_qscore 
+# determines the behavior of ht2-qfilter. 
+# qfilter_allowable_bases is the number of bases which have the quality 
+# score between qfilter_min_qscore and qfilter_allowable_qscore. When the 
+# number of bases that having the quality between qfilter_min_qscore and 
+# qfilter_allowable_qscore exceeds qfilter_allowable_bases, then this read
+# will be filtered out.
+qfilter_min_qscore=config["qfilter_min_qscore"]
+qfilter_allowable_bases=config["qfilter_allowable_bases"]
+qfilter_allowable_qscore=config["qfilter_allowable_qscore"]
+
+
+# parameters related to qiime otu picking
+pick_otu_cmd=config["pick_otu_cmd"]
+qiime_reference_db=config["qiime_reference_db"]
+
+# parameters related to qiime diversity analysis
+mapdata_file=config["mapdata_file"]
+tree_file=config["tree_file"]
+# The minimum number of reads needed to include a sample in the analysis.
+sample_min_reads=config["sample_min_reads"]
+group_category=config["group_category"]
+parameter_file=config["parameter_file"]
+
+run_names = [ run["name"] for run in runs]
+sample_names = [sample["name"] for sample in samples]
+
+rule all:
+    input:
+        "diversity_analysis"
+	# "merged_fasta/combined_seqs.fna"
+	
+        # results from htqc
+        #expand("qc/htqc/{run}/{sample}", \ 
+        #       run=run_names,sample=sample_names),
+        # results from FastQC
+        #expand("qc/fastqc/{run}/{sample}.R{n}_fastqc.html", \
+        #       run=run_names, sample=sample_names, n=["1", "2"]),
+
+	# output fastq files from running trimming program that crop 5' bases
+	# of R1 reads, used by qtrim program as input, so no need to list here.
+	#expand("hc/{run}/{sample}.R1.fastq", run=run_names, sample=sample_names),
+
+	# Output fastq files from running quality trimming program (trimmomatic), 
+	# used by Pandaseq as input files, so no need to be listed here.
+	#expand("qtrim/{run}/{sample}.R{n}.fq", \ 
+	#        run=run_names, sample=sample_names, n=["1", "2"]),
+
+	# output fastq files from running pandseq, used by ht2-qfilter as input files, 
+	# so no need to be listed here
+	#expand("join/{run}/{sample}.fq", run=run_names, sample=sample_names)
+
+	# output files from running ht2-qfilter, used by fastq_to_fasta rule  as input
+        # expand("qfilter/{run}/{sample}.fastq", run=run_names, sample=sample_names)
+
+	# output files from running fastq_to_fasta rule:
+	# expand("fasta/{run}/{sample}.fasta", run=run_names, sample=sample_names)
+
+        # output files from running merge_fasta rule
+	# expand("merged_fasta/{sample}.fasta", sample=sample_names)
+
+
+# run two quality checking programs:
+# 1. FastQC
+# 2. htqc
+rule run_fastqc :
+    input: 
+        rawdir + "/" + "{run}/raw/{sample}.R{n}.fastq"
+    output:
+        "qc/fastqc/{run}/{sample}.R{n}_fastqc.html"
+    params: outdir="qc/fastqc/{run}"
+    threads: 2
+    shell:
+        "fastqc -t {threads} -o {params.outdir} -f fastq {input}"
+
+rule run_htqc:
+    input:
+        R1 = rawdir + "/" + "{run}/raw/{sample}.R1.fastq",
+        R2 = rawdir + "/" + "{run}/raw/{sample}.R2.fastq"
+    output: "qc/htqc/{run}/{sample}"
+    #params: outdir="qc/htqc/{run}/{sample}"
+    threads: 4
+    shell:
+        "ht2-stat -P -i {input.R1} {input.R2} -o {output} -t {threads}"
+
+rule headcrop:
+    input:
+        rawdir + "/{run}/raw/{sample}.R1.fastq"
+    output:
+        "hc/{run}/{sample}.R1.fastq"
+    log: "hc/{run}/{sample}.R1.fastq.trim.log"
+    shell:
+        "trimse -trimlog {log} {input} {output} HEADCROP:13 MINLEN:1 2> {log}"
+
+rule quality_trim:
+    input: 
+        R1="hc/{run}/{sample}.R1.fastq",
+	R2=rawdir + "/{run}/raw/{sample}.R2.fastq"
+    output: 
+        R1="qtrim/{run}/{sample}.R1.fq",
+	R1_np="qtrim/{run}/{sample}.R1_np.fq",
+	R2="qtrim/{run}/{sample}.R2.fq",
+	R2_np="qtrim/{run}/{sample}.R2_np.fq"
+    log: "qtrim/{run}/{sample}.qtrim.log"
+    shell:
+        "trimpe -trimlog {log} {input.R1} {input.R2} {output.R1} {output.R1_np} {output.R2} {output.R2_np} SLIDINGWINDOW:20:20 MINLEN:150"
+    # Use the sliding window to trim reads that have a region of 20 base pairs
+    # but the average Phred score lower than 20. 
+    # It also remove the reads that shorter than 150 base pairs.
+
+rule join_paired_reads:
+    input: 
+        R1="qtrim/{run}/{sample}.R1.fq",
+	R2="qtrim/{run}/{sample}.R2.fq"
+    output: "join/{run}/{sample}.fq"
+    log: "join/{run}/{sample}.log"
+    threads: 4
+    shell:
+        "pandaseq -F -A ea_util -T {threads} -f {input.R1} -r {input.R2} -w {output} -l 350 -L 460 -o 15 -g {log}"
+
+rule run_qfilter:
+    input:
+        "join/{run}/{sample}.fq"
+    output:
+        "qfilter/{run}/{sample}.fastq"
+    params:
+        out_prefix="qfilter/{run}/{sample}"
+    log:
+        "qfilter/{run}/{sample}.log"
+    shell:
+        "ht2-filter -S -Q {qfilter_allowable_qscore} -N {qfilter_allowable_bases} -M {qfilter_min_qscore} -i {input} -o {params.out_prefix} > {log}"
+
+# Convert fastq files to fasta files
+rule fastq_to_fasta:
+    input:
+        "qfilter/{run}/{sample}.fastq"
+    output:
+        "fasta/{run}/{sample}.fasta"
+    log:
+        "fasta/{run}/{sample}.log"
+    shell:
+        "fastq_to_fasta -i {input} -o {output} -v > {log}"
+
+# merge the fasta file for the same sample from different runs.
+rule merge_fasta:
+    input:
+        f1 = "fasta/" + run_names[0] + "/{sample}.fasta",
+        f2 = "fasta/" + run_names[1] + "/{sample}.fasta"
+    output:
+        "merged_fasta/{sample}.fasta"
+    shell:
+        "cat {input.f1} {input.f2} > {output}"
+
+# add sample labels to the fasta files and merge all the fasta files into
+# a single fasta file
+rule add_labels:
+    input:
+        expand("merged_fasta/{sample}.fasta", sample=sample_names)
+    output:
+        "merged_fasta/combined_seqs.fna"
+    params:
+        fasta_folder="merged_fasta"
+    shell:
+        "add_qiime_labels.py -i {params.fasta_folder} -m maplabel.txt " 
+	"-c InputFileName -o {params.fasta_folder}" 
+
+# Run pick_otus.py 
+rule pick_otus:
+    input:
+        "merged_fasta/combined_seqs.fna"
+    output:
+        "oref_otus"
+    threads: 16
+    shell:
+        "{pick_otu_cmd} -m usearch61 -o oref_otus -i {input} -r {qiime_reference_db} -a -O {threads}"
+
+# Run diversity analysis
+rule diversity_analysis:
+    input:
+        "oref_otus"
+    output:
+        "diversity_analysis"
+    threads: 16
+    shell:
+        "core_diversity_analyses.py -i {input}/otu_table_filtered.1.biom -m mapdata.txt -t {input}/{tree_file} -e {min_reads} -o {output} -c {group_category} -p {parameter_file} -a -O {threads}
